@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "just-a-better-list"
+name = "jabl"
 version = "0.0.1"
 description = "An attempt to make lists in Python more useful and functional"
 authors = ["Nic Harvey <nicharvey@protonmail.com>"]
