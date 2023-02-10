@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "jabl"
-version = "0.0.1"
+version = "0.0.1a1"
 description = "An attempt to make lists in Python more useful, functional, and fun to use."
 authors = ["Nic Harvey <nicharvey@protonmail.com>"]
 readme = "README.md"
