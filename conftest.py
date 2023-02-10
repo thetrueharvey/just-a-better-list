@@ -3,7 +3,6 @@
 # %% Libraries
 # stdlib
 from enum import Enum
-from tkinter import E
 
 # 3rd party
 from pytest import fixture
