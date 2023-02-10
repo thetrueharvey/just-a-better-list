@@ -26,12 +26,11 @@ jobs:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: |
-        pip install --upgrade pip
-        pip install poetry
-        poetry update
-        poetry install
-        poetry export --without-hashes --format=requirements.txt > requirements.txt
-        pip install -r requirements.txt
+        python -m pip install --upgrade pip
+        python -m pip install poetry
+        python -m poetry update
+        python -m poetry export --without-hashes --format=requirements.txt > requirements.txt
+        python -m pip install -r requirements.txt
     - name: Lint with flake8
       run: |
         # stop the build if there are Python syntax errors or undefined names
