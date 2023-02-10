@@ -16,6 +16,7 @@ from typing import (
     TypeVar,
     Generic,
     Type,
+    cast,
 )
 from functools import reduce
 from collections.abc import Callable
@@ -59,10 +60,10 @@ class jabl(Generic[T]):
         return self
 
     @beartype
-    def map(self, func: Callable[..., Any]):
+    def map(self, func: Callable[[T], V]):
         self.stack = map(func, self.stack)
 
-        return self
+        return cast(jabl[V], self)
 
     @beartype
     def chunk(
@@ -108,7 +109,10 @@ class jabl(Generic[T]):
         '''
         new_stack = []
         for chunk in self.stack:
-            new_stack += chunk.stack
+            if isinstance(chunk, jabl):
+                new_stack += chunk.collect()
+            else:
+                new_stack += chunk
 
         self.stack = new_stack
 
@@ -135,11 +139,13 @@ class jabl(Generic[T]):
         raise NotImplementedError()
 
     @beartype
-    def collect(self, as_list: bool = True):
+    def collect(self):
         # TODO: Actually use the `as_list` arg
         if isinstance(self.stack, list):
             return self.stack
 
+        if self.stack is None:
+            return [*self.data]
         return [*self.stack]
 
     @beartype
