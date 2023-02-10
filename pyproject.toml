@@ -1,14 +1,13 @@
 [tool.poetry]
 name = "jabl"
-version = "0.0.1"
-description = "An attempt to make lists in Python more useful and functional"
+version = "0.0.1a1"
+description = "An attempt to make lists in Python more useful, functional, and fun to use."
 authors = ["Nic Harvey <nicharvey@protonmail.com>"]
 readme = "README.md"
-packages = [{include = "a-much-better-list"}]
+packages = [{include = "src"}]
 
 [tool.poetry.dependencies]
 python = "^3.9"
-mpire = {extras = ["dill"], version = "^2.6"}
 beartype = "^0.12"
 
 [tool.poetry.group.dev.dependencies]
