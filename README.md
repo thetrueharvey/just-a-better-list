@@ -1,2 +1,2 @@
-# a-much-better-list
-My attempt at making a better List-like in Python, heavily inspired by functionality I've seen in the beautiful Rust lang.
+# just-a-better-list
+Let's make python lists a bit more fun and intuitive to use, shall we?
