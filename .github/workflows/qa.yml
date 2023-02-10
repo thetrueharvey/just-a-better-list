@@ -28,6 +28,7 @@ jobs:
       run: |
         pip install --upgrade pip
         pip install poetry
+        poetry update
         poetry install
         poetry export --without-hashes --format=requirements.txt > requirements.txt
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
