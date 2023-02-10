@@ -8,7 +8,6 @@ packages = [{include = "a-much-better-list"}]
 
 [tool.poetry.dependencies]
 python = "^3.9"
-mpire = {extras = ["dill"], version = "^2.6"}
 beartype = "^0.12"
 
 [tool.poetry.group.dev.dependencies]
