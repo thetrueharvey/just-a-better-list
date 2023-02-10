@@ -4,7 +4,7 @@ version = "0.0.1"
 description = "An attempt to make lists in Python more useful and functional"
 authors = ["Nic Harvey <nicharvey@protonmail.com>"]
 readme = "README.md"
-packages = [{include = "just_a_better_list"}]
+packages = [{include = "a-much-better-list"}]
 
 [tool.poetry.dependencies]
 python = "^3.9"
