@@ -15,7 +15,6 @@ mypy = "^1.0"
 pytest = "^6.2"
 pytest-cov = "^3.0"
 
-
 [tool.poetry.group.examples.dependencies]
 ipykernel = "^6.5"
 numpy = "^1.24"
