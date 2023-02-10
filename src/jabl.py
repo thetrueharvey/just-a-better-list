@@ -23,7 +23,6 @@ from collections.abc import Callable
 
 # external
 from beartype import beartype
-from mpire import WorkerPool
 
 # internal
 
@@ -115,22 +114,6 @@ class jabl(Generic[T]):
                 new_stack += chunk
 
         self.stack = new_stack
-
-        return self
-
-    @beartype
-    def paramap(
-        self,
-        func: Callable[..., Any],
-        n_workers: Optional[int] = None,
-        maintain_order: bool = False,
-    ):
-        '''TODO: Implement `maintain_order`
-        '''
-        with WorkerPool(n_jobs=n_workers, use_dill=True) as pool:
-            result = pool.map(func, self.stack)
-
-        self.stack = result
 
         return self
 
