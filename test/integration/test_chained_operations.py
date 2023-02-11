@@ -6,7 +6,7 @@
 # 3rd party
 
 # module
-from src import jabl
+from jabl import jabl
 
 
 # %%
