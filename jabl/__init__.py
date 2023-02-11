@@ -1,1 +1,1 @@
-from jabl.jabl import jabl
+from jabl.jabl import jabl  # type: ignore

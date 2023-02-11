@@ -10,6 +10,8 @@ TODO: Want to make everything fully lazy so that a list-graph can be instantiate
 # stdlib
 from __future__ import annotations
 from typing import (
+    Protocol,
+    runtime_checkable,
     Any,
     Optional,
     Union,
@@ -19,7 +21,8 @@ from typing import (
     cast,
 )
 from functools import reduce
-from collections.abc import Callable
+from collections.abc import Callable, Sequence, Iterable
+from copy import copy, deepcopy
 
 # external
 from beartype import beartype
@@ -30,46 +33,121 @@ from beartype import beartype
 # %% types
 T = TypeVar('T')
 V = TypeVar('V')
+U = TypeVar('U')
+
+
+@runtime_checkable
+class SupportsAdd(Protocol):
+    def __add__(self, other: SupportsAdd) -> SupportsAdd:
+        ...
+
+
+ADD = TypeVar('ADD', bound=SupportsAdd)
 
 
 # %% Class
 class jabl(Generic[T]):
     def __init__(self, *args: T):
-        self.data =  args
-        self.stack: Any = None
+        self.data: Sequence[T] = args
+        self.stack: Iterable[T] = self.data
 
-    def into_iter(self):
-        self.stack = self.data
-        return self
+    def zip(self, other: jabl[V]) -> jabl[tuple[T, V]]:
+        '''
+        >>> x = jabl(1, 2, 3)
+        >>> y = jabl(4, 5, 6)
+        >>> x.zip(y)
+        >>> jabl((1, 4), (2, 5), (3, 6))
+        '''
+        # TODO: Handle length differences....
+        return jabl(
+            *zip(self.stack, other.stack)
+        )
 
-    @beartype
+    def clone(self) -> jabl[T]:
+        new: jabl[T] = jabl()
+        new.data = copy(self.data)
+        new.stack = copy(self.stack)
+
+        return new
+
     def filter(
         self,
-        predicate: Union[Callable[..., bool], list[bool]]
-    ):
+        predicate: Callable[[T], bool] | jabl[bool]
+    ) -> jabl[T]:
+        @beartype
+        def _validate(predicate: Union[Callable[[T], bool], list[bool]]):
+            pass
+        _validate(predicate)
+        
         if isinstance(predicate, list):
             def _predicate(_):
-                for bool_ in predicate:
-                    yield bool_
+                for _bool in predicate:
+                    yield _bool
         else:
             _predicate = predicate
 
-        self.stack = filter(_predicate, self.stack)
+        new = self.clone()
+        new.stack = filter(_predicate, new.stack)
         
-        return self
+        return new
 
-    @beartype
-    def map(self, func: Callable[[T], V]):
-        self.stack = map(func, self.stack)
+    def map(self, func: Callable[[T], V] | Type[V]) -> jabl[V]:
+        def _validate(func: Callable[[T], V] | Type[V]):
+            pass
+        _validate(func)
 
-        return cast(jabl[V], self)
+        new = self.clone()
+        new.stack = map(func, new.stack)
 
-    @beartype
+        return cast(jabl[V], new)
+
+    def map_when(
+        self,
+        func: Callable[[T], V] | Type[V] | jabl[bool],
+        predicate: Callable[[T], bool] | jabl[bool]
+    ) -> jabl[Union[V, T]]:
+        '''
+        Applies `func` to elements of this jabl whenever `predicate` is True,
+        or evaluates to True for the given element.
+
+        >>> x = jabl(1, 2, 3)
+        >>> y = jabl(True, False, True)
+        >>> x.map_when(lambda x: x + 1, y)
+        >>> jabl(2, 2, 4)
+        '''
+        def _validate(
+            func: Callable[[T], V] | Type[V] | jabl[bool],
+            predicate: Callable[[T], bool] | jabl[bool]
+        ):
+            pass
+        _validate(func, predicate)
+
+        _predicate = predicate if isinstance(predicate, jabl) else self.map(predicate)
+
+        new: jabl[Union[V, T]] = self.clone()
+
+        if isinstance(func, jabl):
+            stack = map(
+                lambda a, b, c: a if b else c,
+                func.stack,
+                _predicate.stack,
+                new.stack
+            )
+        else:
+            stack = map(
+                lambda x, p: func(x) if p else x,  # TODO: Check the typing here
+                new.stack,
+                _predicate.stack
+            )
+        new.stack = stack
+
+        return new
+
     def chunk(
         self,
         chunk_size: Optional[int] = None,
         n_chunks: Optional[int] = None
-    ):
+    ) -> jabl[jabl[T]]:
         '''Converts the list into a chunked form, i.e.:
         
         >>> x = jabl(1, 2, 3, 4, 5, 6, 7)
@@ -79,6 +157,13 @@ class jabl(Generic[T]):
 
         Note that the chunks themselves are `jabls`, so you can do some fun an interesting things with nested mapping
         '''
+        def _validate(
+            chunk_size: Optional[int] = None,
+            n_chunks: Optional[int] = None
+        ):
+            pass
+        _validate(chunk_size, n_chunks)
+
         assert chunk_size is not None or n_chunks is not None, 'Specify `chunk_size` or `chunk_length`'
 
         assert n_chunks is not None, 'Only `n_chunks` is currently supported'
@@ -87,19 +172,20 @@ class jabl(Generic[T]):
         n = n_chunks
 
         k, m = divmod(len(self.stack), n)
-        self.stack = [
+
+        new: jabl[jabl[T]] = self.clone()
+        new.stack = [
             jabl(
-                *self.stack[
+                *new.stack[
                     (i * k) + min(i, m) : (i + 1) * k + min(i+1, m)
                 ]
             )
             for i in range(n)
         ]
 
-        return self
+        return new
 
-    @beartype
-    def unchunk(self):
+    def unchunk(self) -> jabl[T]:
         '''Inverse of the `chunk` method
 
         >>> x = [jabl(1,2,3), jabl(4,5,6), jabl(7)]
@@ -113,52 +199,57 @@ class jabl(Generic[T]):
             else:
                 new_stack += chunk
 
-        self.stack = new_stack
+        new = self.clone()
+        new.stack = new_stack
 
-        return self
+        return new
 
     @beartype
-    def fold(self, func: Callable[[T], V], accumulator: V) -> V:
+    def fold(self, func: Callable[[T], ADD], accumulator: ADD) -> ADD:
+        def _validate(
+            func: Callable[[T], ADD],
+            accumulator: ADD,
+        ):
+            pass
+        _validate(func, accumulator)
+
+        try:
+            accumulator + accumulator  # type: ignore # we just want to confirm that addition works
+        except NotImplementedError:
+            raise TypeError('`accumulator` must support addition between instances of itself')
+
         raise NotImplementedError()
 
-    @beartype
-    def collect(self):
+    def collect(self) -> list[T]:
         # TODO: Actually use the `as_list` arg
-        if isinstance(self.stack, list):
-            return self.stack
-
-        if self.stack is None:
-            return [*self.data]
-        return [*self.stack]
+        return [*deepcopy(self.stack)]
 
     @beartype
     def window(self, n: int):
         '''Yield an iterator as a windows over the input, with each element being a tuple
         '''
-        self.stack = iter(_Window(stack=self.stack, n=n))
-        return self
+        new = self.clone()
+        new.stack = iter(_Window(stack=new.stack, n=n))
+        return new
 
     @beartype
     def when(self, predicate: Callable[..., bool]):
-        raise NotImplementedError()
+        """
+        Begins branching logic, using the format:
 
-        return self
+        >>> x = jabl(1, 2, 3, 4, 5, 6, 7)
+        >>> x.when(lambda x: x % 2 == 0).then("A").otherwise("B")
 
-    @beartype
-    def then(self, func: Callable[..., Any]):
-        raise NotImplementedError()
-
-        return self
-
-    @beartype
-    def otherwise(self, func: Callable[..., Any]):
-        raise NotImplementedError()
+        Note that the 'when' method begins the branching logic, returning a new object representing
+        this intermediate state, and thus must be followed by `.then`, which can be followed by
+        either `.when` to create a secondary condition, or `.otherwise` to create a default condition.
+        """
 
         return self
 
 
 class _Window(jabl[T]):
-    def __init__(self, stack: list[T], n: int):
+    def __init__(self, stack: Iterable[T], n: int):
         self.stack = stack
         self.n = n
 
@@ -177,3 +268,97 @@ class _Window(jabl[T]):
         self.i += 1
         return result
 
+
+# %% When.Then.Otherwise
+class When(Generic[T, V]):
+    """
+    A class that represents the `when` component of the `when` method of a `jabl`.
+    """
+    predicate: Callable[[T], bool]
+    child: Then[T, V]
+    
+    def __init__(self, predicate: Callable[[T], bool]):
+        self.predicate = predicate
+
+    def then(self, func: Callable[[T], V] | Type[V] | jabl[V]) -> Then[T, V]:
+        """
+        A function or literal that is called when the condition of the `when` method is met.
+        """
+        then = Then(func)
+        self.child = then
+        return then
+
+    def eval(
+        self,
+        data: jabl[T],
+        predicate: Optional[jabl[bool]] = None
+    ) -> jabl[Union[T, V]]:
+        _predicate = data.map(self.predicate)
+
+        # TODO: Check that child exists (although users shouldn't be able to call this method directly)
+
+        if predicate is not None:
+            # if the predicate was False, then check if the evaluated condition is True
+            _predicate = _predicate.zip(predicate).map(lambda x_y: not x_y[1] and x_y[0])
+
+        _data: jabl[Union[T, V]] = self.child.eval(data, _predicate)
+
+        return _data
+
+
+class Then(Generic[T, V]):
+    """
+    A class that represents the `then` branch of the `when` method of a `jabl`.
+    """
+    func: Callable[[T], V] | Type[V] | jabl[V]
+    child: When[T, V] | Otherwise[T, V]
+
+    def __init__(
+        self,
+        func: Callable[[T], V] | Type[V] | jabl[V],
+    ):
+        self.func = func
+
+    def when(self, predicate: Callable[[T], bool]) -> When[T, V]:
+        """
+        A function or literal that is called when the condition of the associated `when` method is met.
+        """
+        new: When[T, V] = When(predicate)
+        self.child = new
+        return new
+
+    def otherwise(self, func: Callable[[T], U] | Type[V] | jabl[V]) -> Otherwise[T, U]:
+        """
+        A function or literal that is called when the condition of the associated `when` method is not met.
+        """
+        new: Otherwise[T, U] = Otherwise(func)
+        self.child = new
+        return new
+
+    def eval(self, data: jabl[T], predicate: jabl[bool]) -> jabl[Union[V, T]]:
+        _data = data.map_when(self.func, predicate)
+
+        _data = self.child.eval(_data, predicate)
+        
+        return _data
+
+
+class Otherwise(Generic[T, V]):
+    """
+    A class that represents the default condition of a When/Then statement.
+    """
+    func: Callable[[T], V] | Type[V] | jabl[V]
+    
+    def __init__(
+        self,
+        func: Callable[[T], V] | Type[V] | jabl[V],
+    ):
+        self.func = func
+
+    def eval(self, data: jabl[T], predicate: jabl[bool]) -> jabl[Union[V, T]]:
+        _data = data.map_when(self.func, predicate.map(lambda x: not x))
+        return _data
+        
+        
+
+# %%
