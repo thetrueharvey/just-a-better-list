@@ -60,7 +60,7 @@ class jabl(Generic[T]):
         '''
         # TODO: Handle length differences....
         return jabl(
-            *zip(self.stack, other.stack)
+            *zip(self.copy().stack, other.copy().stack)
         )
 
     def clone(self) -> jabl[T]:
@@ -69,6 +69,9 @@ class jabl(Generic[T]):
         new.stack = copy(self.stack)
 
         return new
+
+    def copy(self) -> jabl[T]:
+        return deepcopy(self)
 
     def filter(
         self,
@@ -103,7 +106,7 @@ class jabl(Generic[T]):
 
     def map_when(
         self,
-        func: Callable[[T], V] | Type[V] | jabl[bool],
+        value: Callable[[T], V] | jabl[V] | V,
         predicate: Callable[[T], bool] | jabl[bool]
     ) -> jabl[Union[V, T]]:
         '''
@@ -116,28 +119,39 @@ class jabl(Generic[T]):
         >>> jabl(2, 2, 4)
         '''
         def _validate(
-            func: Callable[[T], V] | Type[V] | jabl[bool],
+            value: Callable[[T], V] | jabl[V] | V,
             predicate: Callable[[T], bool] | jabl[bool]
         ):
             pass
-        _validate(func, predicate)
+        _validate(value, predicate)
 
         _predicate = predicate if isinstance(predicate, jabl) else self.map(predicate)
 
-        new: jabl[Union[V, T]] = self.clone()
+        new: jabl[V | T] = self.clone()  # type: ignore # TODO: Shoulw we provide type ares to clone?
 
-        if isinstance(func, jabl):
+        if isinstance(value, jabl):
+            value = cast(jabl[V], value)
+            
+            stack = when_a_then_b_else_c(
+                a=_predicate.copy().stack,
+                b=value.stack,
+                c=new.stack
+            )        
+        elif callable(value):
+            value = cast(Callable[[T], V], value)
+            
             stack = map(
-                lambda a, b, c: a if b else c,
-                func.stack,
-                _predicate.stack,
-                new.stack
+                lambda x, p: value(x) if p else x,  # TODO: Check the typing here? I just toldyou it's callable above
+                self.clone().stack,
+                _predicate.stack
             )
         else:
+            value = cast(V, value)
+
             stack = map(
-                lambda x, p: func(x) if p else x,  # TODO: Check the typing here
-                new.stack,
-                _predicate.stack
+                lambda p, x: value if p else x,  # TODO: Check the typing here
+                _predicate.copy().stack,
+                self.clone().stack,
             )
         new.stack = stack
 
@@ -222,7 +236,14 @@ class jabl(Generic[T]):
 
     def collect(self) -> list[T]:
         # TODO: Actually use the `as_list` arg
-        return [*deepcopy(self.stack)]
+        return [*self.copy().stack]
+
+    def peek(self, n: int = -1) -> list[T]:
+        """Return the next `n` elements in the stack, without consuming them
+        """
+        peek = self.copy().collect()
+        
+        return peek[:n]
 
     @beartype
     def window(self, n: int):
@@ -270,75 +291,89 @@ class _Window(jabl[T]):
 
 
 # %% When.Then.Otherwise
-class When(Generic[T, V]):
+class When(Generic[T, V, U]):
     """
     A class that represents the `when` component of the `when` method of a `jabl`.
     """
     predicate: Callable[[T], bool]
-    child: Then[T, V]
+    child: Then[T, V, U]
     
     def __init__(self, predicate: Callable[[T], bool]):
         self.predicate = predicate
 
-    def then(self, func: Callable[[T], V] | Type[V] | jabl[V]) -> Then[T, V]:
+    def then(
+        self,
+        value: Callable[[T], V] | Type[V] | jabl[V] | V
+    ) -> Then[T, V, U]:
         """
         A function or literal that is called when the condition of the `when` method is met.
+
+        TODO: Validation of the length of the value if it's a jabl
         """
-        then = Then(func)
+        then: Then[T, V, U] = Then(value)
         self.child = then
         return then
 
     def eval(
         self,
         data: jabl[T],
-        predicate: Optional[jabl[bool]] = None
+        ignore_indices: Optional[jabl[bool]] = None
     ) -> jabl[Union[T, V]]:
         _predicate = data.map(self.predicate)
 
         # TODO: Check that child exists (although users shouldn't be able to call this method directly)
 
-        if predicate is not None:
-            # if the predicate was False, then check if the evaluated condition is True
-            _predicate = _predicate.zip(predicate).map(lambda x_y: not x_y[1] and x_y[0])
+        if ignore_indices is None:
+            ignore_indices = data.map(lambda _: False)
+            
+        # if the predicate was False, then check if the evaluated condition is True
+        _predicate = _predicate.zip(ignore_indices).map(lambda x_y: not x_y[1] and x_y[0])
 
-        _data: jabl[Union[T, V]] = self.child.eval(data, _predicate)
+        ignore_indices = ignore_indices.zip(_predicate).map(lambda x_y: x_y[0] or x_y[1])
+
+        _data: jabl[Union[T, V]] = self.child.eval(data, _predicate, ignore_indices)
 
         return _data
 
 
-class Then(Generic[T, V]):
+class Then(Generic[T, V, U]):
     """
     A class that represents the `then` branch of the `when` method of a `jabl`.
     """
-    func: Callable[[T], V] | Type[V] | jabl[V]
-    child: When[T, V] | Otherwise[T, V]
+    value: Callable[[T], V] | Type[V] | jabl[V] | V
+    child: When[T, U, V] | Otherwise[T, U]
 
     def __init__(
         self,
-        func: Callable[[T], V] | Type[V] | jabl[V],
+        value: Callable[[T], V] | Type[V] | jabl[V] | V,
     ):
-        self.func = func
+        self.value = value
 
-    def when(self, predicate: Callable[[T], bool]) -> When[T, V]:
+    def when(self, predicate: Callable[[T], bool]) -> When[T, U, V]:
         """
         A function or literal that is called when the condition of the associated `when` method is met.
         """
-        new: When[T, V] = When(predicate)
+        new: When[T, U, V] = When(predicate)
         self.child = new
         return new
 
-    def otherwise(self, func: Callable[[T], U] | Type[V] | jabl[V]) -> Otherwise[T, U]:
+    def otherwise(self, value: Callable[[T], U] | Type[U] | jabl[U] | U) -> Otherwise[T, U]:
         """
         A function or literal that is called when the condition of the associated `when` method is not met.
         """
-        new: Otherwise[T, U] = Otherwise(func)
+        new: Otherwise[T, U] = Otherwise(value)
         self.child = new
         return new
 
-    def eval(self, data: jabl[T], predicate: jabl[bool]) -> jabl[Union[V, T]]:
-        _data = data.map_when(self.func, predicate)
+    def eval(
+        self,
+        data: jabl[T],
+        predicate: jabl[bool],
+        ignore_indices: jabl[bool]
+    ) -> jabl[Union[V, T]]:
+        _data = data.map_when(self.value, predicate)
 
-        _data = self.child.eval(_data, predicate)
+        _data = self.child.eval(_data, ignore_indices)
         
         return _data
 
@@ -347,18 +382,22 @@ class Otherwise(Generic[T, V]):
     """
     A class that represents the default condition of a When/Then statement.
     """
-    func: Callable[[T], V] | Type[V] | jabl[V]
+    func: Callable[[T], V] | Type[V] | jabl[V] | V
     
     def __init__(
         self,
-        func: Callable[[T], V] | Type[V] | jabl[V],
+        value: Callable[[T], V] | Type[V] | jabl[V] | V,
     ):
-        self.func = func
+        self.value = value
 
-    def eval(self, data: jabl[T], predicate: jabl[bool]) -> jabl[Union[V, T]]:
-        _data = data.map_when(self.func, predicate.map(lambda x: not x))
+    def eval(self, data: jabl[T], ignore_indices: jabl[bool]) -> jabl[Union[V, T]]:
+        _data = data.map_when(self.value, ignore_indices.map(lambda x: not x))
         return _data
         
         
 
-# %%
+# %% Utils
+def when_a_then_b_else_c(a: Iterable[bool], b: Iterable[T], c: Iterable[T]) -> Iterable[T]:
+    '''A utility function that mimics the behavior of the `when` method of `jabl`
+    '''
+    return [b_i if a_i else c_i for a_i, b_i, c_i in zip(a, b, c)]

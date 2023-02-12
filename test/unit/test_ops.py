@@ -14,9 +14,21 @@ from jabl import jabl
 # %% Test Suite
 def test_map_multiple_collect():
     x = jabl(1, 2, 3, 4, 5, 6)
-    check: Callable[[int], bool] = lambda x: x % 2 == 0
 
     result = x.map(lambda x: x + 1)
+
+    first_collect = result.collect()
+    next_collect = result.collect()
+
+    assert first_collect == next_collect
+
+
+def test_map_when_multiple_collect():
+    x = jabl(1, 2, 3, 4, 5, 6)
+    y = jabl("A", "B", "C", "D", "E", "F")
+    when: Callable[[int], bool] = lambda x: x % 2 == 0
+
+    result = x.map_when(y, when)
 
     first_collect = result.collect()
     next_collect = result.collect()
