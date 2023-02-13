@@ -12,7 +12,6 @@ from __future__ import annotations
 from typing import (
     Protocol,
     runtime_checkable,
-    Any,
     Optional,
     Union,
     TypeVar,
@@ -20,9 +19,7 @@ from typing import (
     Type,
     cast,
 )
-from functools import reduce
-from collections.abc import Callable, Sequence, Iterable
-from copy import copy, deepcopy
+from collections.abc import Callable, Sequence, Iterable, Iterator
 
 # external
 from beartype import beartype
@@ -49,7 +46,6 @@ ADD = TypeVar('ADD', bound=SupportsAdd)
 class jabl(Generic[T]):
     def __init__(self, *args: T):
         self.data: Sequence[T] = args
-        self.stack: Iterable[T] = self.data
 
     def zip(self, other: jabl[V]) -> jabl[tuple[T, V]]:
         '''
@@ -59,50 +55,32 @@ class jabl(Generic[T]):
         >>> jabl((1, 4), (2, 5), (3, 6))
         '''
         # TODO: Handle length differences....
-        return jabl(
-            *zip(self.copy().stack, other.copy().stack)
-        )
+        return jabl(*zip(self, other))
 
-    def clone(self) -> jabl[T]:
-        new: jabl[T] = jabl()
-        new.data = copy(self.data)
-        new.stack = copy(self.stack)
-
-        return new
-
-    def copy(self) -> jabl[T]:
-        return deepcopy(self)
+    def __iter__(self) -> Iterator[T]:
+        return iter(self.data)
 
     def filter(
         self,
         predicate: Callable[[T], bool] | jabl[bool]
     ) -> jabl[T]:
         @beartype
-        def _validate(predicate: Union[Callable[[T], bool], list[bool]]):
+        def _validate(predicate: Union[Callable[[T], bool], jabl[bool]]):
             pass
         _validate(predicate)
         
-        if isinstance(predicate, list):
-            def _predicate(_):
-                for _bool in predicate:
-                    yield _bool
-        else:
-            _predicate = predicate
-
-        new = self.clone()
-        new.stack = filter(_predicate, new.stack)
+        new: jabl[T] = jabl(*filter(predicate, self.data))
         
         return new
 
-    def map(self, func: Callable[[T], V] | Type[V]) -> jabl[V]:
-        def _validate(func: Callable[[T], V] | Type[V]):
+    def map(self, func: Callable[[T], V]) -> jabl[V]:
+        def _validate(func: Callable[[T], V]):
             pass
         _validate(func)
 
-        new = self.clone()
-        new.stack = map(func, new.stack)
+        new = jabl(*map(func, self.data))
 
-        return cast(jabl[V], new)
+        return new
 
     def map_when(
         self,
@@ -127,33 +105,31 @@ class jabl(Generic[T]):
 
         _predicate = predicate if isinstance(predicate, jabl) else self.map(predicate)
 
-        new: jabl[V | T] = self.clone()  # type: ignore # TODO: Shoulw we provide type ares to clone?
-
         if isinstance(value, jabl):
             value = cast(jabl[V], value)
             
-            stack = when_a_then_b_else_c(
-                a=_predicate.copy().stack,
-                b=value.stack,
-                c=new.stack
+            data = when_a_then_b_else_c(
+                a=_predicate.data,
+                b=value.data,
+                c=self.data
             )        
         elif callable(value):
             value = cast(Callable[[T], V], value)
             
-            stack = map(
+            data = map(
                 lambda x, p: value(x) if p else x,  # TODO: Check the typing here? I just toldyou it's callable above
-                self.clone().stack,
-                _predicate.stack
+                self.data,
+                _predicate.data
             )
         else:
             value = cast(V, value)
 
-            stack = map(
+            data = map(
                 lambda p, x: value if p else x,  # TODO: Check the typing here
-                _predicate.copy().stack,
-                self.clone().stack,
+                _predicate.data,
+                self.data,
             )
-        new.stack = stack
+        new = jabl(*data)
 
         return new
 
@@ -185,17 +161,11 @@ class jabl(Generic[T]):
 
         n = n_chunks
 
-        k, m = divmod(len(self.stack), n)
+        k, m = divmod(len(self.data), n)
 
-        new: jabl[jabl[T]] = self.clone()
-        new.stack = [
-            jabl(
-                *new.stack[
-                    (i * k) + min(i, m) : (i + 1) * k + min(i+1, m)
-                ]
-            )
-            for i in range(n)
-        ]
+        new: jabl[jabl[T]] = jabl(
+            *[self.data[(i * k) + min(i, m) : (i + 1) * k + min(i+1, m)] for i in range(n)]
+        )
 
         return new
 
@@ -206,15 +176,14 @@ class jabl(Generic[T]):
         >>> x.unchunk(chunk_size=3)
         >>> jabl(1, 2, 3, 4, 5, 6, 7)
         '''
-        new_stack = []
-        for chunk in self.stack:
+        data = []
+        for chunk in self.data:
             if isinstance(chunk, jabl):
-                new_stack += chunk.collect()
+                data += chunk.data
             else:
-                new_stack += chunk
+                data += chunk
 
-        new = self.clone()
-        new.stack = new_stack
+        new = jabl(*data)
 
         return new
 
@@ -235,22 +204,17 @@ class jabl(Generic[T]):
         raise NotImplementedError()
 
     def collect(self) -> list[T]:
-        # TODO: Actually use the `as_list` arg
-        return [*self.copy().stack]
+        # More as a placeholder to eventually allow lazy evaluation
+        return list(self.data)
 
     def peek(self, n: int = -1) -> list[T]:
-        """Return the next `n` elements in the stack, without consuming them
-        """
-        peek = self.copy().collect()
-        
-        return peek[:n]
+        return self.data[:n]
 
     @beartype
     def window(self, n: int):
         '''Yield an iterator as a windows over the input, with each element being a tuple
         '''
-        new = self.clone()
-        new.stack = iter(_Window(stack=new.stack, n=n))
+        new = jabl(*iter(_Window(stack=self.data, n=n)))
         return new
 
     @beartype
@@ -270,8 +234,8 @@ class jabl(Generic[T]):
 
 
 class _Window(jabl[T]):
-    def __init__(self, stack: Iterable[T], n: int):
-        self.stack = stack
+    def __init__(self, data: Sequence[T], n: int):
+        self.data = data
         self.n = n
 
     def __iter__(self):
@@ -279,10 +243,10 @@ class _Window(jabl[T]):
         return self
 
     def __next__(self):
-        if isinstance(self.stack, (_Window, map, filter)):  # If windows are being chained
-            self.stack = tuple(self.stack)
+        if isinstance(self.data, (_Window, map, filter)):  # If windows are being chained
+            self.data = tuple(self.data)
 
-        result = self.stack[self.i: (self.i + self.n)]
+        result = self.data[self.i: (self.i + self.n)]
         if len(result) < self.n:
             raise StopIteration
         
@@ -397,7 +361,8 @@ class Otherwise(Generic[T, V]):
         
 
 # %% Utils
-def when_a_then_b_else_c(a: Iterable[bool], b: Iterable[T], c: Iterable[T]) -> Iterable[T]:
+def when_a_then_b_else_c(a: Iterable[bool], b: Iterable[T], c: Iterable[V]) -> jabl[T | V]:
     '''A utility function that mimics the behavior of the `when` method of `jabl`
     '''
-    return [b_i if a_i else c_i for a_i, b_i, c_i in zip(a, b, c)]
+    data = [b_i if a_i else c_i for a_i, b_i, c_i in zip(a, b, c)]
+    return jabl(*data)
